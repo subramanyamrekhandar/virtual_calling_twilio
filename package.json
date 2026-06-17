@@ -1,0 +1,11 @@
+{
+  "name": "twilio-web-calling-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Single Node.js server for Twilio browser calls and phone bridge calls.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  }
+}

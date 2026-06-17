@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Twilio Web Calling</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="topbar" aria-label="Call controls overview">
+        <div>
+          <h1>Twilio Web Calling</h1>
+          <p>Browser voice calls and mobile bridge calls from one Node server.</p>
+        </div>
+        <div class="status-pill" id="connectionState">Not connected</div>
+      </section>
+
+      <section class="workspace">
+        <form class="panel" id="browserCallForm">
+          <div class="panel-heading">
+            <div>
+              <h2>Browser Call</h2>
+              <p>Use your laptop microphone to call a phone number.</p>
+            </div>
+          </div>
+
+          <label>
+            Browser identity
+            <input id="identity" name="identity" autocomplete="off" value="web-user" />
+          </label>
+
+          <label>
+            Friend phone number
+            <input id="browserFriendNumber" name="browserFriendNumber" autocomplete="tel" placeholder="+14155552671" />
+          </label>
+
+          <div class="button-row">
+            <button class="secondary" type="button" id="registerDeviceButton">
+              <span data-icon="radio"></span>
+              Connect Browser
+            </button>
+            <button type="submit" id="browserCallButton" disabled>
+              <span data-icon="phone-call"></span>
+              Call
+            </button>
+            <button class="danger" type="button" id="hangupBrowserButton" disabled>
+              <span data-icon="phone-off"></span>
+              Hang Up
+            </button>
+          </div>
+        </form>
+
+        <form class="panel" id="bridgeCallForm">
+          <div class="panel-heading">
+            <div>
+              <h2>Phone Bridge</h2>
+              <p>Twilio calls your phone first, then connects your friend.</p>
+            </div>
+          </div>
+
+          <label>
+            Your phone number
+            <input id="myNumber" name="myNumber" autocomplete="tel" placeholder="+14155552671" />
+          </label>
+
+          <label>
+            Friend phone number
+            <input id="bridgeFriendNumber" name="bridgeFriendNumber" autocomplete="tel" placeholder="+14155552671" />
+          </label>
+
+          <div class="button-row">
+            <button type="submit" id="bridgeCallButton">
+              <span data-icon="git-branch"></span>
+              Start Bridge
+            </button>
+            <button class="secondary" type="button" id="checkBridgeButton" disabled>
+              <span data-icon="activity"></span>
+              Status
+            </button>
+            <button class="danger" type="button" id="hangupBridgeButton" disabled>
+              <span data-icon="phone-off"></span>
+              End
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section class="log-panel" aria-live="polite">
+        <div class="panel-heading compact">
+          <h2>Call Log</h2>
+          <button class="icon-button" type="button" id="clearLogButton" title="Clear log" aria-label="Clear log">
+            <span data-icon="trash-2"></span>
+          </button>
+        </div>
+        <ol id="callLog"></ol>
+      </section>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/@twilio/voice-sdk@2/dist/twilio.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>
