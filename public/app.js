@@ -12,6 +12,7 @@ const elements = {
   bridgeFriendNumber: document.querySelector("#bridgeFriendNumber"),
   registerDeviceButton: document.querySelector("#registerDeviceButton"),
   browserCallButton: document.querySelector("#browserCallButton"),
+  agentTestButton: document.querySelector("#agentTestButton"),
   hangupBrowserButton: document.querySelector("#hangupBrowserButton"),
   bridgeCallButton: document.querySelector("#bridgeCallButton"),
   checkBridgeButton: document.querySelector("#checkBridgeButton"),
@@ -75,6 +76,7 @@ function wireCallEvents(call) {
     setConnectionState("Browser ready", "ready");
     elements.hangupBrowserButton.disabled = true;
     elements.browserCallButton.disabled = false;
+    elements.agentTestButton.disabled = false;
     log("Call ended or the phone leg disconnected.");
   });
   call.on("cancel", () => log("Browser call canceled."));
@@ -104,6 +106,7 @@ async function registerDevice() {
   state.device.on("registered", () => {
     setConnectionState("Browser ready", "ready");
     elements.browserCallButton.disabled = false;
+    elements.agentTestButton.disabled = false;
     elements.registerDeviceButton.disabled = false;
     log(`Browser registered as ${identity}.`, "success");
   });
@@ -111,6 +114,7 @@ async function registerDevice() {
   state.device.on("unregistered", () => {
     setConnectionState("Not connected");
     elements.browserCallButton.disabled = true;
+    elements.agentTestButton.disabled = true;
     log("Browser device unregistered.");
   });
 
@@ -137,6 +141,22 @@ async function startBrowserCall(event) {
 
   state.activeCall = await state.device.connect({
     params: { To: friendNumber },
+  });
+  wireCallEvents(state.activeCall);
+}
+
+async function startAgentTest() {
+  if (!state.device) {
+    throw new Error("Connect the browser first.");
+  }
+
+  elements.browserCallButton.disabled = true;
+  elements.agentTestButton.disabled = true;
+  setConnectionState("Calling agent...", "live");
+  log("Calling Twilio test agent.");
+
+  state.activeCall = await state.device.connect({
+    params: { To: "agent:test" },
   });
   wireCallEvents(state.activeCall);
 }
@@ -194,9 +214,19 @@ function bindEvents() {
     registerDevice().catch((error) => log(error.message, "error"));
   });
 
+  elements.agentTestButton.addEventListener("click", () => {
+    startAgentTest().catch((error) => {
+      elements.browserCallButton.disabled = false;
+      elements.agentTestButton.disabled = false;
+      setConnectionState(state.device ? "Browser ready" : "Not connected", state.device ? "ready" : "");
+      log(error.message, "error");
+    });
+  });
+
   elements.browserCallForm.addEventListener("submit", (event) => {
     startBrowserCall(event).catch((error) => {
       elements.browserCallButton.disabled = false;
+      elements.agentTestButton.disabled = false;
       setConnectionState(state.device ? "Browser ready" : "Not connected", state.device ? "ready" : "");
       log(error.message, "error");
     });

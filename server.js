@@ -86,6 +86,17 @@ function buildBrowserCallTwiml(to) {
   ].join("");
 }
 
+function buildAgentTestTwiml() {
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<Response>",
+    "<Say voice=\"alice\">Your browser is connected to the Twilio test agent.</Say>",
+    "<Pause length=\"1\"/>",
+    "<Say voice=\"alice\">If you can hear this message, browser audio is working. The phone call leg is the part that needs debugging.</Say>",
+    "</Response>",
+  ].join("");
+}
+
 function buildMessageTwiml(message) {
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -261,6 +272,10 @@ async function routeApi(req, res, url) {
   if (req.method === "POST" && url.pathname === "/voice") {
     try {
       const data = await readRequestData(req, url);
+      if (String(data.To || "").trim() === "agent:test") {
+        writeXml(res, 200, buildAgentTestTwiml());
+        return true;
+      }
       const to = validatePhoneNumber(String(data.To || "").trim(), "To");
       writeXml(res, 200, buildBrowserCallTwiml(to));
     } catch (error) {
