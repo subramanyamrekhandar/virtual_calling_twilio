@@ -68,7 +68,7 @@ function buildDialTwiml(friendNumber) {
     '<?xml version="1.0" encoding="UTF-8"?>',
     "<Response>",
     "<Say>Connecting your call now.</Say>",
-    `<Dial callerId="${escapeXml(env("TWILIO_NUMBER"))}">`,
+    `<Dial callerId="${escapeXml(env("TWILIO_NUMBER"))}" answerOnBridge="true" timeout="45" action="/dial-result" method="POST">`,
     `<Number>${escapeXml(friendNumber)}</Number>`,
     "</Dial>",
     "</Response>",
@@ -79,7 +79,7 @@ function buildBrowserCallTwiml(to) {
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     "<Response>",
-    `<Dial callerId="${escapeXml(env("TWILIO_NUMBER"))}">`,
+    `<Dial callerId="${escapeXml(env("TWILIO_NUMBER"))}" answerOnBridge="true" timeout="45" action="/dial-result" method="POST">`,
     `<Number>${escapeXml(to)}</Number>`,
     "</Dial>",
     "</Response>",
@@ -91,6 +91,25 @@ function buildMessageTwiml(message) {
     '<?xml version="1.0" encoding="UTF-8"?>',
     "<Response>",
     `<Say>${escapeXml(message)}</Say>`,
+    "</Response>",
+  ].join("");
+}
+
+function buildDialResultTwiml(status) {
+  const responseByStatus = {
+    answered: "The destination answered, and the call has ended.",
+    completed: "The call has ended.",
+    busy: "The destination number was busy.",
+    "no-answer": "The destination did not answer.",
+    failed: "Twilio could not connect the destination number.",
+    canceled: "The destination call was canceled.",
+  };
+
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<Response>",
+    `<Say>${escapeXml(responseByStatus[status] || `The call ended with status ${status || "unknown"}.`)}</Say>`,
+    "<Hangup/>",
     "</Response>",
   ].join("");
 }
@@ -247,6 +266,12 @@ async function routeApi(req, res, url) {
     } catch (error) {
       writeXml(res, 200, buildMessageTwiml(error.message || "The call could not be placed."));
     }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/dial-result") {
+    const data = await readRequestData(req, url);
+    writeXml(res, 200, buildDialResultTwiml(String(data.DialCallStatus || "").trim()));
     return true;
   }
 

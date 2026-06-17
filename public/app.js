@@ -68,14 +68,14 @@ function wireCallEvents(call) {
   call.on("accept", () => {
     setConnectionState("Call live", "live");
     elements.hangupBrowserButton.disabled = false;
-    log("Browser call connected.", "success");
+    log("Browser connected to Twilio. Waiting for the phone leg to answer.", "success");
   });
   call.on("disconnect", () => {
     state.activeCall = null;
     setConnectionState("Browser ready", "ready");
     elements.hangupBrowserButton.disabled = true;
     elements.browserCallButton.disabled = false;
-    log("Browser call disconnected.");
+    log("Call ended or the phone leg disconnected.");
   });
   call.on("cancel", () => log("Browser call canceled."));
   call.on("reject", () => log("Browser call rejected.", "error"));
