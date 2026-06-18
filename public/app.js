@@ -227,6 +227,8 @@ async function fetchCallEvents(clientCallId, destination = "", attempt = 1) {
         `Twilio event ${event.callStatus || "unknown"} for ${event.to || "unknown destination"}; Call SID ${event.callSid || "unknown"}.`
       );
     }
+
+    await fetchCallDiagnostics(state.lastBrowserCallSid || "", destination, state.lastStartedAt || "");
   } catch (error) {
     log(error.message || "Could not fetch call events.", "error");
   }

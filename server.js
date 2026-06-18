@@ -444,20 +444,32 @@ async function selectCallerIdForDestination(accountSid, phoneNumber, diagnostics
   const fallbackCallerId = env("TWILIO_NUMBER");
 
   if (preferredEnvName !== "TWILIO_NUMBER") {
-    try {
-      const preferredCheck = await checkCallerId(accountSid, preferredCallerId);
-      if (preferredCheck.ok) {
-        diagnostics.checks.push(preferredCheck.message);
-        return {
-          callerId: preferredCallerId,
-          callerIdEnvName: preferredEnvName,
-        };
-      }
+    if (preferredCallerId === phoneNumber) {
+      diagnostics.warnings.push(`${preferredEnvName} matches the destination number; falling back to TWILIO_NUMBER.`);
+    } else {
+      try {
+        const preferredCheck = await checkCallerId(accountSid, preferredCallerId);
+        if (preferredCheck.ok) {
+          diagnostics.checks.push(preferredCheck.message);
+          return {
+            callerId: preferredCallerId,
+            callerIdEnvName: preferredEnvName,
+          };
+        }
 
-      diagnostics.warnings.push(`${preferredCheck.message} Falling back to TWILIO_NUMBER.`);
-    } catch (error) {
-      diagnostics.warnings.push(`${preferredEnvName} is invalid: ${error.message}. Falling back to TWILIO_NUMBER.`);
+        diagnostics.warnings.push(`${preferredCheck.message} Falling back to TWILIO_NUMBER.`);
+      } catch (error) {
+        diagnostics.warnings.push(`${preferredEnvName} is invalid: ${error.message}. Falling back to TWILIO_NUMBER.`);
+      }
     }
+  }
+
+  if (fallbackCallerId === phoneNumber) {
+    diagnostics.errors.push("TWILIO_NUMBER matches the destination number; use a different caller ID.");
+    return {
+      callerId: fallbackCallerId,
+      callerIdEnvName: "TWILIO_NUMBER",
+    };
   }
 
   try {
