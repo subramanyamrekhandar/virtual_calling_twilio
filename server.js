@@ -347,6 +347,23 @@ function getConfig() {
   };
 }
 
+function compactCall(call) {
+  return {
+    sid: call.sid,
+    parentCallSid: call.parent_call_sid,
+    from: call.from,
+    to: call.to,
+    status: call.status,
+    direction: call.direction,
+    duration: call.duration,
+    startTime: call.start_time,
+    endTime: call.end_time,
+    price: call.price,
+    priceUnit: call.price_unit,
+    errorCode: call.error_code,
+  };
+}
+
 async function buildPreflight(to) {
   const diagnostics = {
     ok: true,
@@ -430,6 +447,23 @@ async function routeApi(req, res, url) {
       ? recentCallEvents.filter((event) => event.clientCallId === clientCallId)
       : recentCallEvents.slice(0, 25);
     writeJson(res, 200, { events });
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/recent-calls") {
+    try {
+      const to = validatePhoneNumber(String(url.searchParams.get("to") || "").trim(), "Friend phone number");
+      const accountSid = validateSid("TWILIO_ACCOUNT_SID", "AC");
+      const calls = await twilioRequest(
+        "GET",
+        `/2010-04-01/Accounts/${accountSid}/Calls.json?To=${encodeURIComponent(to)}&PageSize=10`
+      );
+      writeJson(res, 200, {
+        calls: Array.isArray(calls.calls) ? calls.calls.map(compactCall) : [],
+      });
+    } catch (error) {
+      sendError(res, 400, error);
+    }
     return true;
   }
 

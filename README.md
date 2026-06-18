@@ -86,6 +86,14 @@ Those callback events are logged by the server and can be queried from:
 /api/call-events
 ```
 
+On serverless platforms such as Vercel, callback requests and browser polling may
+hit different runtime instances. For durable diagnostics, the UI also queries
+Twilio's Calls API after disconnect:
+
+```text
+/api/recent-calls?to=+14155552671
+```
+
 Error `31603` means Twilio or the destination carrier declined the call. For
 India (`+91`) calls, first confirm Twilio Voice Geo Permissions for India, then
 check Twilio Monitor > Logs > Calls for the child call SID and carrier response.
