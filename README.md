@@ -39,6 +39,9 @@ Browser calling uses the Twilio Voice SDK. In Twilio Console:
 https://your-public-url.example.com/voice
 ```
 
+The app accepts both `GET` and `POST` for this URL, so either Twilio request
+method will work.
+
 For local testing, expose this server with a tunnel such as ngrok or Cloudflare
 Tunnel, then use the tunnel URL in the TwiML App.
 

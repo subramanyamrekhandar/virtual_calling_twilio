@@ -269,7 +269,7 @@ async function routeApi(req, res, url) {
     return true;
   }
 
-  if (req.method === "POST" && url.pathname === "/voice") {
+  if ((req.method === "GET" || req.method === "POST") && url.pathname === "/voice") {
     try {
       const data = await readRequestData(req, url);
       if (String(data.To || "").trim() === "agent:test") {
@@ -284,7 +284,7 @@ async function routeApi(req, res, url) {
     return true;
   }
 
-  if (req.method === "POST" && url.pathname === "/dial-result") {
+  if ((req.method === "GET" || req.method === "POST") && url.pathname === "/dial-result") {
     const data = await readRequestData(req, url);
     writeXml(res, 200, buildDialResultTwiml(String(data.DialCallStatus || "").trim()));
     return true;
