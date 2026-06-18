@@ -80,6 +80,10 @@ function describeCallError(error) {
     return `ConnectionError (31005): Twilio signaling disconnected. ${details}`;
   }
 
+  if (error && Number(error.code) === 31603) {
+    return `Declined (31603): Twilio or the destination carrier rejected the call. For phone numbers, check Geo Permissions, account funds, caller ID, and the Twilio call log. ${details}`;
+  }
+
   return details || "Browser call error.";
 }
 
