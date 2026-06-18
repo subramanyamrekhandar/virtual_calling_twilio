@@ -65,6 +65,14 @@ function requirePhoneNumber(input, label) {
   return value;
 }
 
+function describeCallError(error) {
+  if (error && Number(error.code) === 31005) {
+    return "ConnectionError (31005): Twilio signaling disconnected. Try Test Agent, then switch network or browser if it repeats.";
+  }
+
+  return error.message || "Browser call error.";
+}
+
 function wireCallEvents(call) {
   call.on("accept", () => {
     setConnectionState("Call live", "live");
@@ -81,7 +89,7 @@ function wireCallEvents(call) {
   });
   call.on("cancel", () => log("Browser call canceled."));
   call.on("reject", () => log("Browser call rejected.", "error"));
-  call.on("error", (error) => log(error.message || "Browser call error.", "error"));
+  call.on("error", (error) => log(describeCallError(error), "error"));
 }
 
 async function registerDevice() {
@@ -100,7 +108,9 @@ async function registerDevice() {
   }
 
   state.device = new window.Twilio.Device(token, {
+    edge: ["singapore", "sydney", "tokyo", "ashburn"],
     logLevel: 1,
+    maxCallSignalingTimeoutMs: 30000,
   });
 
   state.device.on("registered", () => {
@@ -121,7 +131,7 @@ async function registerDevice() {
   state.device.on("error", (error) => {
     setConnectionState("Device error");
     elements.registerDeviceButton.disabled = false;
-    log(error.message || "Twilio device error.", "error");
+    log(describeCallError(error), "error");
   });
 
   await state.device.register();
