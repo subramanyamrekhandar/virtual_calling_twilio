@@ -244,6 +244,8 @@ function getConfig() {
   return {
     defaultMyNumber: optionalEnv("DEFAULT_MY_PHONE_NUMBER"),
     defaultFriendNumber: optionalEnv("DEFAULT_FRIEND_PHONE_NUMBER"),
+    twilioNumber: optionalEnv("TWILIO_NUMBER"),
+    twimlAppSid: optionalEnv("TWILIO_TWIML_APP_SID"),
     browserCallingConfigured: Boolean(
       optionalEnv("TWILIO_ACCOUNT_SID") &&
         optionalEnv("TWILIO_API_KEY_SID") &&

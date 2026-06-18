@@ -66,11 +66,21 @@ function requirePhoneNumber(input, label) {
 }
 
 function describeCallError(error) {
+  const details = [
+    error.code ? `code ${error.code}` : "",
+    error.name || "",
+    error.message || "",
+    error.description || "",
+    error.explanation || "",
+  ]
+    .filter(Boolean)
+    .join(" - ");
+
   if (error && Number(error.code) === 31005) {
-    return "ConnectionError (31005): Twilio signaling disconnected. Try Test Agent, then switch network or browser if it repeats.";
+    return `ConnectionError (31005): Twilio signaling disconnected. ${details}`;
   }
 
-  return error.message || "Browser call error.";
+  return details || "Browser call error.";
 }
 
 function wireCallEvents(call) {
@@ -109,6 +119,7 @@ async function registerDevice() {
 
   state.device = new window.Twilio.Device(token, {
     edge: ["singapore", "sydney", "tokyo", "ashburn"],
+    enableImprovedSignalingErrorPrecision: true,
     logLevel: 1,
     maxCallSignalingTimeoutMs: 30000,
   });
@@ -216,6 +227,8 @@ async function loadConfig() {
 
   if (!config.browserCallingConfigured) {
     log("Browser calling needs TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET, and TWILIO_TWIML_APP_SID.", "error");
+  } else {
+    log(`Config loaded. TwiML App ${config.twimlAppSid || "unknown"}, caller ID ${config.twilioNumber || "unknown"}.`);
   }
 }
 
