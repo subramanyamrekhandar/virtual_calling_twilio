@@ -15,6 +15,12 @@ Copy-Item .env.example .env
 
 All phone numbers must be in E.164 format, for example `+14155552671`.
 
+For deployment, set `PUBLIC_BASE_URL` to the deployed HTTPS origin:
+
+```text
+PUBLIC_BASE_URL=https://virtual-calling-twilio.vercel.app
+```
+
 ## Run
 
 ```powershell
@@ -71,7 +77,7 @@ Before a browser-to-phone call, the app runs a server-side preflight check:
 The TwiML also attaches a Twilio status callback to the dialed phone leg:
 
 ```text
-/call-events
+https://your-public-url.example.com/call-events
 ```
 
 Those callback events are logged by the server and can be queried from:

@@ -94,7 +94,7 @@ async function runPreflight(friendNumber) {
   return diagnostics;
 }
 
-async function fetchCallEvents(clientCallId) {
+async function fetchCallEvents(clientCallId, attempt = 1) {
   if (!clientCallId) {
     return;
   }
@@ -102,6 +102,10 @@ async function fetchCallEvents(clientCallId) {
   try {
     const data = await api(`/api/call-events?clientCallId=${encodeURIComponent(clientCallId)}`);
     if (!data.events || data.events.length === 0) {
+      if (attempt < 6) {
+        window.setTimeout(() => fetchCallEvents(clientCallId, attempt + 1), 1500);
+        return;
+      }
       log(`No Twilio carrier events received yet for trace ${clientCallId}. Check Twilio Monitor for the child call.`);
       return;
     }
@@ -153,7 +157,7 @@ function wireCallEvents(call) {
     elements.browserCallButton.disabled = false;
     elements.agentTestButton.disabled = false;
     log("Call ended or the phone leg disconnected.");
-    window.setTimeout(() => fetchCallEvents(clientCallId), 1200);
+    window.setTimeout(() => fetchCallEvents(clientCallId), 1500);
   });
   call.on("cancel", () => log("Browser call canceled."));
   call.on("reject", () => log("Browser call rejected.", "error"));

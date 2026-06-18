@@ -88,6 +88,17 @@ function recordCallEvent(event) {
   console.log("Twilio call event", JSON.stringify(recentCallEvents[0]));
 }
 
+function getPublicBaseUrl(req) {
+  const configuredUrl = optionalEnv("PUBLIC_BASE_URL").replace(/\/$/, "");
+  if (configuredUrl) {
+    return configuredUrl;
+  }
+
+  const proto = req.headers["x-forwarded-proto"] || "https";
+  const host = req.headers["x-forwarded-host"] || req.headers.host;
+  return `${String(proto).split(",")[0]}://${String(host).split(",")[0]}`;
+}
+
 function validateSid(name, prefix) {
   const value = env(name);
   if (!value.startsWith(prefix)) {
@@ -114,29 +125,36 @@ function escapeXml(value) {
     .replaceAll("'", "&apos;");
 }
 
-function buildStatusCallbackAttrs(clientCallId) {
+function buildStatusCallbackAttrs(baseUrl, clientCallId) {
   const query = clientCallId ? `?clientCallId=${encodeURIComponent(clientCallId)}` : "";
-  return `statusCallback="/call-events${query}" statusCallbackMethod="POST" statusCallbackEvent="initiated ringing answered completed"`;
+  return `statusCallback="${escapeXml(`${baseUrl}/call-events${query}`)}" statusCallbackMethod="POST" statusCallbackEvent="initiated ringing answered completed"`;
 }
 
-function buildDialTwiml(friendNumber, clientCallId = "") {
+function buildDialActionAttr(baseUrl, clientCallId) {
+  const query = clientCallId ? `?clientCallId=${encodeURIComponent(clientCallId)}` : "";
+  return `action="${escapeXml(`${baseUrl}/dial-result${query}`)}"`;
+}
+
+function buildDialTwiml(friendNumber, clientCallId = "", baseUrl = "") {
+  const resolvedBaseUrl = baseUrl || optionalEnv("PUBLIC_BASE_URL").replace(/\/$/, "");
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     "<Response>",
     "<Say>Connecting your call now.</Say>",
-    `<Dial callerId="${escapeXml(env("TWILIO_NUMBER"))}" answerOnBridge="true" timeout="45" action="/dial-result" method="POST">`,
-    `<Number ${buildStatusCallbackAttrs(clientCallId)}>${escapeXml(friendNumber)}</Number>`,
+    `<Dial callerId="${escapeXml(env("TWILIO_NUMBER"))}" answerOnBridge="true" timeout="45" ${buildDialActionAttr(resolvedBaseUrl, clientCallId)} method="POST">`,
+    `<Number ${buildStatusCallbackAttrs(resolvedBaseUrl, clientCallId)}>${escapeXml(friendNumber)}</Number>`,
     "</Dial>",
     "</Response>",
   ].join("");
 }
 
-function buildBrowserCallTwiml(to, clientCallId = "") {
+function buildBrowserCallTwiml(to, clientCallId = "", baseUrl = "") {
+  const resolvedBaseUrl = baseUrl || optionalEnv("PUBLIC_BASE_URL").replace(/\/$/, "");
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     "<Response>",
-    `<Dial callerId="${escapeXml(env("TWILIO_NUMBER"))}" answerOnBridge="true" timeout="45" action="/dial-result" method="POST">`,
-    `<Number ${buildStatusCallbackAttrs(clientCallId)}>${escapeXml(to)}</Number>`,
+    `<Dial callerId="${escapeXml(env("TWILIO_NUMBER"))}" answerOnBridge="true" timeout="45" ${buildDialActionAttr(resolvedBaseUrl, clientCallId)} method="POST">`,
+    `<Number ${buildStatusCallbackAttrs(resolvedBaseUrl, clientCallId)}>${escapeXml(to)}</Number>`,
     "</Dial>",
     "</Response>",
   ].join("");
@@ -433,7 +451,7 @@ async function routeApi(req, res, url) {
         return true;
       }
       const to = validatePhoneNumber(String(data.To || "").trim(), "To");
-      writeXml(res, 200, buildBrowserCallTwiml(to, String(data.ClientCallId || "").trim()));
+      writeXml(res, 200, buildBrowserCallTwiml(to, String(data.ClientCallId || "").trim(), getPublicBaseUrl(req)));
     } catch (error) {
       writeXml(res, 200, buildMessageTwiml(error.message || "The call could not be placed."));
     }
@@ -477,7 +495,7 @@ async function routeApi(req, res, url) {
       const call = await twilioRequest("POST", `/2010-04-01/Accounts/${accountSid}/Calls.json`, {
         To: myNumber,
         From: env("TWILIO_NUMBER"),
-        Twiml: buildDialTwiml(friendNumber, crypto.randomUUID()),
+        Twiml: buildDialTwiml(friendNumber, crypto.randomUUID(), optionalEnv("PUBLIC_BASE_URL").replace(/\/$/, "")),
       });
 
       writeJson(res, 200, {
