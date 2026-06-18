@@ -64,11 +64,17 @@ function maskValue(value, visible = 4) {
 
 function destinationGuidance(phoneNumber) {
   if (phoneNumber.startsWith("+91")) {
-    return [
+    const guidance = [
       "Destination is India (+91). Confirm Twilio Voice Geo Permissions allow India.",
-      "Some India carriers reject international caller IDs. Test a US destination to isolate carrier routing.",
       "Open Twilio Monitor > Logs > Calls for the exact declined child call.",
     ];
+    if (optionalEnv("INDIA_CALLER_ID")) {
+      guidance.push("Using INDIA_CALLER_ID for India calls. Confirm it is verified in Twilio.");
+    } else {
+      guidance.push("Some India carriers reject international caller IDs. Set INDIA_CALLER_ID to a verified India caller ID if available.");
+      guidance.push("Test a US destination to isolate carrier routing.");
+    }
+    return guidance;
   }
 
   if (phoneNumber.startsWith("+1")) {
@@ -135,13 +141,25 @@ function buildDialActionAttr(baseUrl, clientCallId) {
   return `action="${escapeXml(`${baseUrl}/dial-result${query}`)}"`;
 }
 
+function callerIdEnvNameForDestination(phoneNumber) {
+  if (phoneNumber.startsWith("+91") && optionalEnv("INDIA_CALLER_ID")) {
+    return "INDIA_CALLER_ID";
+  }
+  return "TWILIO_NUMBER";
+}
+
+function callerIdForDestination(phoneNumber) {
+  return env(callerIdEnvNameForDestination(phoneNumber));
+}
+
 function buildDialTwiml(friendNumber, clientCallId = "", baseUrl = "") {
   const resolvedBaseUrl = baseUrl || optionalEnv("PUBLIC_BASE_URL").replace(/\/$/, "");
+  const callerId = callerIdForDestination(friendNumber);
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     "<Response>",
     "<Say>Connecting your call now.</Say>",
-    `<Dial callerId="${escapeXml(env("TWILIO_NUMBER"))}" answerOnBridge="true" timeout="45" ${buildDialActionAttr(resolvedBaseUrl, clientCallId)} method="POST">`,
+    `<Dial callerId="${escapeXml(callerId)}" answerOnBridge="true" timeout="45" ${buildDialActionAttr(resolvedBaseUrl, clientCallId)} method="POST">`,
     `<Number ${buildStatusCallbackAttrs(resolvedBaseUrl, clientCallId)}>${escapeXml(friendNumber)}</Number>`,
     "</Dial>",
     "</Response>",
@@ -150,10 +168,11 @@ function buildDialTwiml(friendNumber, clientCallId = "", baseUrl = "") {
 
 function buildBrowserCallTwiml(to, clientCallId = "", baseUrl = "") {
   const resolvedBaseUrl = baseUrl || optionalEnv("PUBLIC_BASE_URL").replace(/\/$/, "");
+  const callerId = callerIdForDestination(to);
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     "<Response>",
-    `<Dial callerId="${escapeXml(env("TWILIO_NUMBER"))}" answerOnBridge="true" timeout="45" ${buildDialActionAttr(resolvedBaseUrl, clientCallId)} method="POST">`,
+    `<Dial callerId="${escapeXml(callerId)}" answerOnBridge="true" timeout="45" ${buildDialActionAttr(resolvedBaseUrl, clientCallId)} method="POST">`,
     `<Number ${buildStatusCallbackAttrs(resolvedBaseUrl, clientCallId)}>${escapeXml(to)}</Number>`,
     "</Dial>",
     "</Response>",
@@ -335,6 +354,7 @@ function getConfig() {
     defaultMyNumber: optionalEnv("DEFAULT_MY_PHONE_NUMBER"),
     defaultFriendNumber: optionalEnv("DEFAULT_FRIEND_PHONE_NUMBER"),
     twilioNumber: optionalEnv("TWILIO_NUMBER"),
+    indiaCallerId: optionalEnv("INDIA_CALLER_ID"),
     twimlAppSid,
     configErrors,
     browserCallingConfigured: Boolean(
@@ -364,10 +384,50 @@ function compactCall(call) {
   };
 }
 
+async function verifyCallerId(accountSid, callerId, diagnostics) {
+  validatePhoneNumber(callerId, "Caller ID");
+
+  const numberQuery = encodeURIComponent(callerId);
+  const numbers = await twilioRequest(
+    "GET",
+    `/2010-04-01/Accounts/${accountSid}/IncomingPhoneNumbers.json?PhoneNumber=${numberQuery}`
+  );
+  const ownedNumber = Array.isArray(numbers.incoming_phone_numbers)
+    ? numbers.incoming_phone_numbers[0]
+    : null;
+
+  if (ownedNumber) {
+    diagnostics.checks.push(`Caller ID belongs to this account: ${ownedNumber.phone_number}.`);
+    if (ownedNumber.capabilities && ownedNumber.capabilities.voice !== true) {
+      diagnostics.errors.push("Selected caller ID does not have Voice capability.");
+    }
+    return;
+  }
+
+  const outgoingCallerIds = await twilioRequest(
+    "GET",
+    `/2010-04-01/Accounts/${accountSid}/OutgoingCallerIds.json?PhoneNumber=${numberQuery}`
+  );
+  const verifiedCallerId = Array.isArray(outgoingCallerIds.outgoing_caller_ids)
+    ? outgoingCallerIds.outgoing_caller_ids[0]
+    : null;
+
+  if (verifiedCallerId) {
+    diagnostics.checks.push(`Caller ID is verified in this account: ${verifiedCallerId.phone_number}.`);
+    return;
+  }
+
+  diagnostics.errors.push("Selected caller ID must be a Twilio number on this account or a verified outgoing caller ID.");
+}
+
 async function buildPreflight(to) {
+  const callerIdEnvName = callerIdEnvNameForDestination(to);
+  const callerId = optionalEnv(callerIdEnvName);
   const diagnostics = {
     ok: true,
     destination: to,
+    callerId,
+    callerIdEnvName,
     accountSid: maskValue(optionalEnv("TWILIO_ACCOUNT_SID")),
     apiKeySid: maskValue(optionalEnv("TWILIO_API_KEY_SID")),
     twimlAppSid: maskValue(optionalEnv("TWILIO_TWIML_APP_SID")),
@@ -387,7 +447,7 @@ async function buildPreflight(to) {
   }
 
   try {
-    validatePhoneNumber(optionalEnv("TWILIO_NUMBER"), "TWILIO_NUMBER");
+    validatePhoneNumber(callerId, callerIdEnvName);
   } catch (error) {
     diagnostics.errors.push(error.message);
   }
@@ -401,23 +461,7 @@ async function buildPreflight(to) {
     const account = await twilioRequest("GET", `/2010-04-01/Accounts/${accountSid}.json`);
     diagnostics.checks.push(`Twilio account status: ${account.status || "unknown"}.`);
 
-    const numberQuery = encodeURIComponent(env("TWILIO_NUMBER"));
-    const numbers = await twilioRequest(
-      "GET",
-      `/2010-04-01/Accounts/${accountSid}/IncomingPhoneNumbers.json?PhoneNumber=${numberQuery}`
-    );
-    const ownedNumber = Array.isArray(numbers.incoming_phone_numbers)
-      ? numbers.incoming_phone_numbers[0]
-      : null;
-
-    if (ownedNumber) {
-      diagnostics.checks.push(`Caller ID belongs to this account: ${ownedNumber.phone_number}.`);
-      if (ownedNumber.capabilities && ownedNumber.capabilities.voice !== true) {
-        diagnostics.errors.push("TWILIO_NUMBER does not have Voice capability.");
-      }
-    } else {
-      diagnostics.errors.push("TWILIO_NUMBER was not found in this Twilio account.");
-    }
+    await verifyCallerId(accountSid, callerId, diagnostics);
   }
 
   diagnostics.ok = diagnostics.errors.length === 0;
@@ -571,7 +615,17 @@ async function routeApi(req, res, url) {
 
   if ((req.method === "GET" || req.method === "POST") && url.pathname === "/dial-result") {
     const data = await readRequestData(req, url);
-    writeXml(res, 200, buildDialResultTwiml(String(data.DialCallStatus || "").trim()));
+    const dialCallStatus = String(data.DialCallStatus || "").trim();
+    recordCallEvent({
+      eventType: "dial-result",
+      clientCallId: String(url.searchParams.get("clientCallId") || ""),
+      callSid: data.CallSid,
+      dialCallSid: data.DialCallSid,
+      dialCallStatus,
+      dialCallDuration: data.DialCallDuration,
+      dialBridged: data.DialBridged,
+    });
+    writeXml(res, 200, buildDialResultTwiml(dialCallStatus));
     return true;
   }
 

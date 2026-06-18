@@ -215,6 +215,14 @@ async function fetchCallEvents(clientCallId, destination = "", attempt = 1) {
     }
 
     for (const event of data.events.slice().reverse()) {
+      if (event.eventType === "dial-result") {
+        log(
+          `Dial result ${event.dialCallStatus || "unknown"}; phone leg ${event.dialCallSid || "unknown"}; duration ${event.dialCallDuration || 0}s.`,
+          event.dialCallStatus && event.dialCallStatus !== "completed" ? "error" : ""
+        );
+        continue;
+      }
+
       log(
         `Twilio event ${event.callStatus || "unknown"} for ${event.to || "unknown destination"}; Call SID ${event.callSid || "unknown"}.`
       );

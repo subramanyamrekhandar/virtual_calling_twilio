@@ -64,6 +64,8 @@ the call.
 - If your account is still in trial mode, verified caller ID restrictions may apply.
 - Browser calling requires microphone permission in your browser.
 - This version uses only built-in Node.js modules, so no `npm install` is required.
+- For India (`+91`) destinations, set `INDIA_CALLER_ID` to a Twilio-owned or
+  verified outgoing caller ID if carriers reject your default `TWILIO_NUMBER`.
 
 ## Operational Diagnostics
 
@@ -101,4 +103,5 @@ call with older calls to the same destination.
 
 Error `31603` means Twilio or the destination carrier declined the call. For
 India (`+91`) calls, first confirm Twilio Voice Geo Permissions for India, then
-check Twilio Monitor > Logs > Calls for the child call SID and carrier response.
+set `INDIA_CALLER_ID` to a verified India caller ID if available, and check
+Twilio Monitor > Logs > Calls for the child call SID and carrier response.
