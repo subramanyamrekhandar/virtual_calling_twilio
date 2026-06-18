@@ -69,7 +69,7 @@ function destinationGuidance(phoneNumber) {
       "Open Twilio Monitor > Logs > Calls for the exact declined child call.",
     ];
     if (optionalEnv("INDIA_CALLER_ID")) {
-      guidance.push("Using INDIA_CALLER_ID for India calls. Confirm it is verified in Twilio.");
+      guidance.push("INDIA_CALLER_ID is configured; the app will use it only if Twilio confirms it is owned or verified.");
     } else {
       guidance.push("Some India carriers reject international caller IDs. Set INDIA_CALLER_ID to a verified India caller ID if available.");
       guidance.push("Test a US destination to isolate carrier routing.");
@@ -152,9 +152,8 @@ function callerIdForDestination(phoneNumber) {
   return env(callerIdEnvNameForDestination(phoneNumber));
 }
 
-function buildDialTwiml(friendNumber, clientCallId = "", baseUrl = "") {
+function buildDialTwiml(friendNumber, clientCallId = "", baseUrl = "", callerId = callerIdForDestination(friendNumber)) {
   const resolvedBaseUrl = baseUrl || optionalEnv("PUBLIC_BASE_URL").replace(/\/$/, "");
-  const callerId = callerIdForDestination(friendNumber);
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     "<Response>",
@@ -166,9 +165,8 @@ function buildDialTwiml(friendNumber, clientCallId = "", baseUrl = "") {
   ].join("");
 }
 
-function buildBrowserCallTwiml(to, clientCallId = "", baseUrl = "") {
+function buildBrowserCallTwiml(to, clientCallId = "", baseUrl = "", callerId = callerIdForDestination(to)) {
   const resolvedBaseUrl = baseUrl || optionalEnv("PUBLIC_BASE_URL").replace(/\/$/, "");
-  const callerId = callerIdForDestination(to);
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     "<Response>",
@@ -384,7 +382,7 @@ function compactCall(call) {
   };
 }
 
-async function verifyCallerId(accountSid, callerId, diagnostics) {
+async function checkCallerId(accountSid, callerId) {
   validatePhoneNumber(callerId, "Caller ID");
 
   const numberQuery = encodeURIComponent(callerId);
@@ -397,11 +395,16 @@ async function verifyCallerId(accountSid, callerId, diagnostics) {
     : null;
 
   if (ownedNumber) {
-    diagnostics.checks.push(`Caller ID belongs to this account: ${ownedNumber.phone_number}.`);
     if (ownedNumber.capabilities && ownedNumber.capabilities.voice !== true) {
-      diagnostics.errors.push("Selected caller ID does not have Voice capability.");
+      return {
+        ok: false,
+        message: `Caller ID ${ownedNumber.phone_number} belongs to this account but does not have Voice capability.`,
+      };
     }
-    return;
+    return {
+      ok: true,
+      message: `Caller ID belongs to this account: ${ownedNumber.phone_number}.`,
+    };
   }
 
   const outgoingCallerIds = await twilioRequest(
@@ -413,21 +416,67 @@ async function verifyCallerId(accountSid, callerId, diagnostics) {
     : null;
 
   if (verifiedCallerId) {
-    diagnostics.checks.push(`Caller ID is verified in this account: ${verifiedCallerId.phone_number}.`);
-    return;
+    return {
+      ok: true,
+      message: `Caller ID is verified in this account: ${verifiedCallerId.phone_number}.`,
+    };
   }
 
-  diagnostics.errors.push("Selected caller ID must be a Twilio number on this account or a verified outgoing caller ID.");
+  return {
+    ok: false,
+    message: `Caller ID ${callerId} must be a Twilio number on this account or a verified outgoing caller ID.`,
+  };
+}
+
+async function selectCallerIdForDestination(accountSid, phoneNumber, diagnostics) {
+  const preferredEnvName = callerIdEnvNameForDestination(phoneNumber);
+  const preferredCallerId = optionalEnv(preferredEnvName);
+  const fallbackCallerId = env("TWILIO_NUMBER");
+
+  if (preferredEnvName !== "TWILIO_NUMBER") {
+    try {
+      const preferredCheck = await checkCallerId(accountSid, preferredCallerId);
+      if (preferredCheck.ok) {
+        diagnostics.checks.push(preferredCheck.message);
+        return {
+          callerId: preferredCallerId,
+          callerIdEnvName: preferredEnvName,
+        };
+      }
+
+      diagnostics.warnings.push(`${preferredCheck.message} Falling back to TWILIO_NUMBER.`);
+    } catch (error) {
+      diagnostics.warnings.push(`${preferredEnvName} is invalid: ${error.message}. Falling back to TWILIO_NUMBER.`);
+    }
+  }
+
+  try {
+    const fallbackCheck = await checkCallerId(accountSid, fallbackCallerId);
+    if (fallbackCheck.ok) {
+      diagnostics.checks.push(fallbackCheck.message);
+      return {
+        callerId: fallbackCallerId,
+        callerIdEnvName: "TWILIO_NUMBER",
+      };
+    }
+
+    diagnostics.errors.push(fallbackCheck.message);
+  } catch (error) {
+    diagnostics.errors.push(`TWILIO_NUMBER is invalid: ${error.message}.`);
+  }
+
+  return {
+    callerId: fallbackCallerId,
+    callerIdEnvName: "TWILIO_NUMBER",
+  };
 }
 
 async function buildPreflight(to) {
-  const callerIdEnvName = callerIdEnvNameForDestination(to);
-  const callerId = optionalEnv(callerIdEnvName);
   const diagnostics = {
     ok: true,
     destination: to,
-    callerId,
-    callerIdEnvName,
+    callerId: "",
+    callerIdEnvName: "",
     accountSid: maskValue(optionalEnv("TWILIO_ACCOUNT_SID")),
     apiKeySid: maskValue(optionalEnv("TWILIO_API_KEY_SID")),
     twimlAppSid: maskValue(optionalEnv("TWILIO_TWIML_APP_SID")),
@@ -446,12 +495,6 @@ async function buildPreflight(to) {
     diagnostics.errors.push(error.message);
   }
 
-  try {
-    validatePhoneNumber(callerId, callerIdEnvName);
-  } catch (error) {
-    diagnostics.errors.push(error.message);
-  }
-
   if (!config.browserCallingConfigured) {
     diagnostics.errors.push("Browser calling is not fully configured.");
   }
@@ -461,7 +504,9 @@ async function buildPreflight(to) {
     const account = await twilioRequest("GET", `/2010-04-01/Accounts/${accountSid}.json`);
     diagnostics.checks.push(`Twilio account status: ${account.status || "unknown"}.`);
 
-    await verifyCallerId(accountSid, callerId, diagnostics);
+    const selectedCallerId = await selectCallerIdForDestination(accountSid, to, diagnostics);
+    diagnostics.callerId = selectedCallerId.callerId;
+    diagnostics.callerIdEnvName = selectedCallerId.callerIdEnvName;
   }
 
   diagnostics.ok = diagnostics.errors.length === 0;
@@ -590,7 +635,17 @@ async function routeApi(req, res, url) {
         return true;
       }
       const to = validatePhoneNumber(String(data.To || "").trim(), "To");
-      writeXml(res, 200, buildBrowserCallTwiml(to, String(data.ClientCallId || "").trim(), getPublicBaseUrl(req)));
+      const accountSid = validateSid("TWILIO_ACCOUNT_SID", "AC");
+      const diagnostics = { checks: [], warnings: [], errors: [] };
+      const selectedCallerId = await selectCallerIdForDestination(accountSid, to, diagnostics);
+      if (diagnostics.errors.length > 0) {
+        throw new Error(diagnostics.errors.join(" "));
+      }
+      writeXml(
+        res,
+        200,
+        buildBrowserCallTwiml(to, String(data.ClientCallId || "").trim(), getPublicBaseUrl(req), selectedCallerId.callerId)
+      );
     } catch (error) {
       writeXml(res, 200, buildMessageTwiml(error.message || "The call could not be placed."));
     }
@@ -641,10 +696,20 @@ async function routeApi(req, res, url) {
         "Friend phone number"
       );
       const accountSid = env("TWILIO_ACCOUNT_SID");
+      const diagnostics = { checks: [], warnings: [], errors: [] };
+      const selectedCallerId = await selectCallerIdForDestination(accountSid, friendNumber, diagnostics);
+      if (diagnostics.errors.length > 0) {
+        throw new Error(diagnostics.errors.join(" "));
+      }
       const call = await twilioRequest("POST", `/2010-04-01/Accounts/${accountSid}/Calls.json`, {
         To: myNumber,
         From: env("TWILIO_NUMBER"),
-        Twiml: buildDialTwiml(friendNumber, crypto.randomUUID(), optionalEnv("PUBLIC_BASE_URL").replace(/\/$/, "")),
+        Twiml: buildDialTwiml(
+          friendNumber,
+          crypto.randomUUID(),
+          optionalEnv("PUBLIC_BASE_URL").replace(/\/$/, ""),
+          selectedCallerId.callerId
+        ),
       });
 
       writeJson(res, 200, {
