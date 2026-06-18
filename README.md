@@ -92,7 +92,12 @@ Twilio's Calls API after disconnect:
 
 ```text
 /api/recent-calls?to=+14155552671
+/api/call-diagnostics?callSid=CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&to=+14155552671
 ```
+
+`/api/call-diagnostics` fetches the browser leg by exact Call SID, then attempts
+to fetch child phone legs by `ParentCallSid`. This avoids confusing the current
+call with older calls to the same destination.
 
 Error `31603` means Twilio or the destination carrier declined the call. For
 India (`+91`) calls, first confirm Twilio Voice Geo Permissions for India, then

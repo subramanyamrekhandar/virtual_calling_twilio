@@ -453,14 +453,75 @@ async function routeApi(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/recent-calls") {
     try {
       const to = validatePhoneNumber(String(url.searchParams.get("to") || "").trim(), "Friend phone number");
+      const startedAfter = String(url.searchParams.get("startedAfter") || "").trim();
       const accountSid = validateSid("TWILIO_ACCOUNT_SID", "AC");
       const calls = await twilioRequest(
         "GET",
         `/2010-04-01/Accounts/${accountSid}/Calls.json?To=${encodeURIComponent(to)}&PageSize=10`
       );
+      const cutoff = startedAfter ? Date.parse(startedAfter) - 60000 : 0;
+      const filteredCalls = Array.isArray(calls.calls)
+        ? calls.calls.filter((call) => {
+            if (!cutoff || !call.start_time) {
+              return true;
+            }
+            return Date.parse(call.start_time) >= cutoff;
+          })
+        : [];
       writeJson(res, 200, {
-        calls: Array.isArray(calls.calls) ? calls.calls.map(compactCall) : [],
+        calls: filteredCalls.map(compactCall),
       });
+    } catch (error) {
+      sendError(res, 400, error);
+    }
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/call-diagnostics") {
+    try {
+      const accountSid = validateSid("TWILIO_ACCOUNT_SID", "AC");
+      const callSid = String(url.searchParams.get("callSid") || "").trim();
+      const to = String(url.searchParams.get("to") || "").trim();
+      const startedAfter = String(url.searchParams.get("startedAfter") || "").trim();
+      const diagnostics = {
+        call: null,
+        childCalls: [],
+        recentDestinationCalls: [],
+      };
+
+      if (callSid) {
+        const call = await twilioRequest(
+          "GET",
+          `/2010-04-01/Accounts/${accountSid}/Calls/${encodeURIComponent(callSid)}.json`
+        );
+        diagnostics.call = compactCall(call);
+
+        const children = await twilioRequest(
+          "GET",
+          `/2010-04-01/Accounts/${accountSid}/Calls.json?ParentCallSid=${encodeURIComponent(callSid)}&PageSize=10`
+        );
+        diagnostics.childCalls = Array.isArray(children.calls) ? children.calls.map(compactCall) : [];
+      }
+
+      if (to && e164Pattern.test(to)) {
+        const calls = await twilioRequest(
+          "GET",
+          `/2010-04-01/Accounts/${accountSid}/Calls.json?To=${encodeURIComponent(to)}&PageSize=10`
+        );
+        const cutoff = startedAfter ? Date.parse(startedAfter) - 60000 : 0;
+        diagnostics.recentDestinationCalls = Array.isArray(calls.calls)
+          ? calls.calls
+              .filter((call) => {
+                if (!cutoff || !call.start_time) {
+                  return true;
+                }
+                return Date.parse(call.start_time) >= cutoff;
+              })
+              .map(compactCall)
+          : [];
+      }
+
+      writeJson(res, 200, diagnostics);
     } catch (error) {
       sendError(res, 400, error);
     }

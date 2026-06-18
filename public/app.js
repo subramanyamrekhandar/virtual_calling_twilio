@@ -2,7 +2,9 @@ const state = {
   device: null,
   activeCall: null,
   activeClientCallId: "",
+  activeBrowserCallSid: "",
   activeDestination: "",
+  activeStartedAt: "",
   bridgeCallSid: "",
 };
 
@@ -107,13 +109,34 @@ function describeTwilioCall(call) {
   return parts.join(", ");
 }
 
-async function fetchRecentCalls(destination) {
+function readSdkCallSid(call) {
+  return (
+    call &&
+    call.parameters &&
+    (call.parameters.CallSid || call.parameters.callSid || call.parameters.callsid || "")
+  );
+}
+
+function captureSdkCallSid(call) {
+  const callSid = readSdkCallSid(call);
+  if (callSid && callSid !== state.activeBrowserCallSid) {
+    state.activeBrowserCallSid = callSid;
+    log(`Browser Call SID ${callSid}.`);
+  }
+  return callSid;
+}
+
+async function fetchRecentCalls(destination, startedAt = "") {
   if (!destination) {
     return;
   }
 
   try {
-    const data = await api(`/api/recent-calls?to=${encodeURIComponent(destination)}`);
+    const query = new URLSearchParams({ to: destination });
+    if (startedAt) {
+      query.set("startedAfter", startedAt);
+    }
+    const data = await api(`/api/recent-calls?${query}`);
     if (!data.calls || data.calls.length === 0) {
       log(`No recent Twilio REST call records found for ${destination}. Open Twilio Monitor > Logs > Calls.`);
       return;
@@ -125,6 +148,45 @@ async function fetchRecentCalls(destination) {
     }
   } catch (error) {
     log(error.message || "Could not fetch recent Twilio call records.", "error");
+  }
+}
+
+async function fetchCallDiagnostics(callSid, destination, startedAt) {
+  try {
+    const query = new URLSearchParams();
+    if (callSid) {
+      query.set("callSid", callSid);
+    }
+    if (destination) {
+      query.set("to", destination);
+    }
+    if (startedAt) {
+      query.set("startedAfter", startedAt);
+    }
+
+    const data = await api(`/api/call-diagnostics?${query}`);
+    if (data.call) {
+      log(`Browser leg: ${describeTwilioCall(data.call)}`, data.call.errorCode ? "error" : "");
+    }
+
+    if (data.childCalls && data.childCalls.length > 0) {
+      for (const call of data.childCalls) {
+        log(`Child phone leg: ${describeTwilioCall(call)}`, call.errorCode ? "error" : "");
+      }
+      return true;
+    }
+
+    if (data.recentDestinationCalls && data.recentDestinationCalls.length > 0) {
+      for (const call of data.recentDestinationCalls.slice(0, 3)) {
+        log(`Recent destination leg: ${describeTwilioCall(call)}`, call.errorCode ? "error" : "");
+      }
+      return true;
+    }
+
+    return false;
+  } catch (error) {
+    log(error.message || "Could not fetch call diagnostics.", "error");
+    return false;
   }
 }
 
@@ -141,7 +203,14 @@ async function fetchCallEvents(clientCallId, destination = "", attempt = 1) {
         return;
       }
       log(`No callback events found for trace ${clientCallId}; checking Twilio REST call records.`);
-      await fetchRecentCalls(destination);
+      const foundDiagnostics = await fetchCallDiagnostics(
+        state.lastBrowserCallSid || "",
+        destination,
+        state.lastStartedAt || ""
+      );
+      if (!foundDiagnostics) {
+        await fetchRecentCalls(destination, state.lastStartedAt || "");
+      }
       return;
     }
 
@@ -178,17 +247,27 @@ function describeCallError(error) {
 }
 
 function wireCallEvents(call) {
+  window.setTimeout(() => captureSdkCallSid(call), 500);
+  window.setTimeout(() => captureSdkCallSid(call), 1500);
+
   call.on("accept", () => {
+    captureSdkCallSid(call);
     setConnectionState("Call live", "live");
     elements.hangupBrowserButton.disabled = false;
     log("Browser connected to Twilio. Waiting for the phone leg to answer.", "success");
   });
   call.on("disconnect", () => {
     const clientCallId = state.activeClientCallId;
+    const browserCallSid = captureSdkCallSid(call) || state.activeBrowserCallSid;
     const destination = state.activeDestination;
+    const startedAt = state.activeStartedAt;
+    state.lastBrowserCallSid = browserCallSid;
+    state.lastStartedAt = startedAt;
     state.activeCall = null;
     state.activeClientCallId = "";
+    state.activeBrowserCallSid = "";
     state.activeDestination = "";
+    state.activeStartedAt = "";
     setConnectionState("Browser ready", "ready");
     elements.hangupBrowserButton.disabled = true;
     elements.browserCallButton.disabled = false;
@@ -262,7 +341,9 @@ async function startBrowserCall(event) {
   await runPreflight(friendNumber);
   const clientCallId = makeClientCallId();
   state.activeClientCallId = clientCallId;
+  state.activeBrowserCallSid = "";
   state.activeDestination = friendNumber;
+  state.activeStartedAt = new Date().toISOString();
   log(`Call trace ${clientCallId}.`);
   log(`Dialing ${friendNumber} from browser.`);
 
@@ -281,7 +362,9 @@ async function startAgentTest() {
   elements.agentTestButton.disabled = true;
   setConnectionState("Calling agent...", "live");
   state.activeClientCallId = makeClientCallId();
+  state.activeBrowserCallSid = "";
   state.activeDestination = "";
+  state.activeStartedAt = new Date().toISOString();
   log("Calling Twilio test agent.");
 
   state.activeCall = await state.device.connect({
