@@ -6,6 +6,7 @@ const path = require("path");
 const port = Number(process.env.PORT || 3100);
 const publicDir = path.join(__dirname, "public");
 const e164Pattern = /^\+[1-9]\d{7,14}$/;
+const recentCallEvents = [];
 
 loadDotEnv();
 
@@ -54,6 +55,39 @@ function validatePhoneNumber(value, label) {
   return value;
 }
 
+function maskValue(value, visible = 4) {
+  if (!value) {
+    return "";
+  }
+  return `${value.slice(0, 2)}...${value.slice(-visible)}`;
+}
+
+function destinationGuidance(phoneNumber) {
+  if (phoneNumber.startsWith("+91")) {
+    return [
+      "Destination is India (+91). Confirm Twilio Voice Geo Permissions allow India.",
+      "Some India carriers reject international caller IDs. Test a US destination to isolate carrier routing.",
+      "Open Twilio Monitor > Logs > Calls for the exact declined child call.",
+    ];
+  }
+
+  if (phoneNumber.startsWith("+1")) {
+    return ["Destination is NANP (+1). If this fails, check caller ID, account status, and Twilio call logs."];
+  }
+
+  return ["Confirm Twilio Voice Geo Permissions and carrier support for this destination country."];
+}
+
+function recordCallEvent(event) {
+  recentCallEvents.unshift({
+    at: new Date().toISOString(),
+    ...event,
+  });
+
+  recentCallEvents.splice(100);
+  console.log("Twilio call event", JSON.stringify(recentCallEvents[0]));
+}
+
 function validateSid(name, prefix) {
   const value = env(name);
   if (!value.startsWith(prefix)) {
@@ -80,24 +114,29 @@ function escapeXml(value) {
     .replaceAll("'", "&apos;");
 }
 
-function buildDialTwiml(friendNumber) {
+function buildStatusCallbackAttrs(clientCallId) {
+  const query = clientCallId ? `?clientCallId=${encodeURIComponent(clientCallId)}` : "";
+  return `statusCallback="/call-events${query}" statusCallbackMethod="POST" statusCallbackEvent="initiated ringing answered completed"`;
+}
+
+function buildDialTwiml(friendNumber, clientCallId = "") {
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     "<Response>",
     "<Say>Connecting your call now.</Say>",
     `<Dial callerId="${escapeXml(env("TWILIO_NUMBER"))}" answerOnBridge="true" timeout="45" action="/dial-result" method="POST">`,
-    `<Number>${escapeXml(friendNumber)}</Number>`,
+    `<Number ${buildStatusCallbackAttrs(clientCallId)}>${escapeXml(friendNumber)}</Number>`,
     "</Dial>",
     "</Response>",
   ].join("");
 }
 
-function buildBrowserCallTwiml(to) {
+function buildBrowserCallTwiml(to, clientCallId = "") {
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     "<Response>",
     `<Dial callerId="${escapeXml(env("TWILIO_NUMBER"))}" answerOnBridge="true" timeout="45" action="/dial-result" method="POST">`,
-    `<Number>${escapeXml(to)}</Number>`,
+    `<Number ${buildStatusCallbackAttrs(clientCallId)}>${escapeXml(to)}</Number>`,
     "</Dial>",
     "</Response>",
   ].join("");
@@ -290,9 +329,89 @@ function getConfig() {
   };
 }
 
+async function buildPreflight(to) {
+  const diagnostics = {
+    ok: true,
+    destination: to,
+    accountSid: maskValue(optionalEnv("TWILIO_ACCOUNT_SID")),
+    apiKeySid: maskValue(optionalEnv("TWILIO_API_KEY_SID")),
+    twimlAppSid: maskValue(optionalEnv("TWILIO_TWIML_APP_SID")),
+    twilioNumber: optionalEnv("TWILIO_NUMBER"),
+    checks: [],
+    warnings: destinationGuidance(to),
+    errors: [],
+  };
+
+  const config = getConfig();
+  diagnostics.errors.push(...config.configErrors);
+
+  try {
+    validatePhoneNumber(to, "Friend phone number");
+  } catch (error) {
+    diagnostics.errors.push(error.message);
+  }
+
+  try {
+    validatePhoneNumber(optionalEnv("TWILIO_NUMBER"), "TWILIO_NUMBER");
+  } catch (error) {
+    diagnostics.errors.push(error.message);
+  }
+
+  if (!config.browserCallingConfigured) {
+    diagnostics.errors.push("Browser calling is not fully configured.");
+  }
+
+  if (diagnostics.errors.length === 0) {
+    const accountSid = validateSid("TWILIO_ACCOUNT_SID", "AC");
+    const account = await twilioRequest("GET", `/2010-04-01/Accounts/${accountSid}.json`);
+    diagnostics.checks.push(`Twilio account status: ${account.status || "unknown"}.`);
+
+    const numberQuery = encodeURIComponent(env("TWILIO_NUMBER"));
+    const numbers = await twilioRequest(
+      "GET",
+      `/2010-04-01/Accounts/${accountSid}/IncomingPhoneNumbers.json?PhoneNumber=${numberQuery}`
+    );
+    const ownedNumber = Array.isArray(numbers.incoming_phone_numbers)
+      ? numbers.incoming_phone_numbers[0]
+      : null;
+
+    if (ownedNumber) {
+      diagnostics.checks.push(`Caller ID belongs to this account: ${ownedNumber.phone_number}.`);
+      if (ownedNumber.capabilities && ownedNumber.capabilities.voice !== true) {
+        diagnostics.errors.push("TWILIO_NUMBER does not have Voice capability.");
+      }
+    } else {
+      diagnostics.errors.push("TWILIO_NUMBER was not found in this Twilio account.");
+    }
+  }
+
+  diagnostics.ok = diagnostics.errors.length === 0;
+  return diagnostics;
+}
+
 async function routeApi(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/config") {
     writeJson(res, 200, getConfig());
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/preflight") {
+    try {
+      const to = validatePhoneNumber(String(url.searchParams.get("to") || "").trim(), "Friend phone number");
+      const diagnostics = await buildPreflight(to);
+      writeJson(res, diagnostics.ok ? 200 : 400, diagnostics);
+    } catch (error) {
+      sendError(res, 400, error);
+    }
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/call-events") {
+    const clientCallId = String(url.searchParams.get("clientCallId") || "");
+    const events = clientCallId
+      ? recentCallEvents.filter((event) => event.clientCallId === clientCallId)
+      : recentCallEvents.slice(0, 25);
+    writeJson(res, 200, { events });
     return true;
   }
 
@@ -314,10 +433,26 @@ async function routeApi(req, res, url) {
         return true;
       }
       const to = validatePhoneNumber(String(data.To || "").trim(), "To");
-      writeXml(res, 200, buildBrowserCallTwiml(to));
+      writeXml(res, 200, buildBrowserCallTwiml(to, String(data.ClientCallId || "").trim()));
     } catch (error) {
       writeXml(res, 200, buildMessageTwiml(error.message || "The call could not be placed."));
     }
+    return true;
+  }
+
+  if ((req.method === "GET" || req.method === "POST") && url.pathname === "/call-events") {
+    const data = await readRequestData(req, url);
+    recordCallEvent({
+      clientCallId: String(data.clientCallId || url.searchParams.get("clientCallId") || ""),
+      callSid: data.CallSid,
+      parentCallSid: data.ParentCallSid,
+      callStatus: data.CallStatus,
+      to: data.To,
+      from: data.From,
+      sequenceNumber: data.SequenceNumber,
+      errorCode: data.ErrorCode,
+    });
+    writeText(res, 200, "ok");
     return true;
   }
 
@@ -342,7 +477,7 @@ async function routeApi(req, res, url) {
       const call = await twilioRequest("POST", `/2010-04-01/Accounts/${accountSid}/Calls.json`, {
         To: myNumber,
         From: env("TWILIO_NUMBER"),
-        Twiml: buildDialTwiml(friendNumber),
+        Twiml: buildDialTwiml(friendNumber, crypto.randomUUID()),
       });
 
       writeJson(res, 200, {

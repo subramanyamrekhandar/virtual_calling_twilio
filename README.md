@@ -58,3 +58,28 @@ the call.
 - If your account is still in trial mode, verified caller ID restrictions may apply.
 - Browser calling requires microphone permission in your browser.
 - This version uses only built-in Node.js modules, so no `npm install` is required.
+
+## Operational Diagnostics
+
+Before a browser-to-phone call, the app runs a server-side preflight check:
+
+- validates SID prefixes and phone number formats
+- verifies the Twilio account is reachable
+- verifies `TWILIO_NUMBER` belongs to the account
+- logs country-specific guidance for the destination
+
+The TwiML also attaches a Twilio status callback to the dialed phone leg:
+
+```text
+/call-events
+```
+
+Those callback events are logged by the server and can be queried from:
+
+```text
+/api/call-events
+```
+
+Error `31603` means Twilio or the destination carrier declined the call. For
+India (`+91`) calls, first confirm Twilio Voice Geo Permissions for India, then
+check Twilio Monitor > Logs > Calls for the child call SID and carrier response.

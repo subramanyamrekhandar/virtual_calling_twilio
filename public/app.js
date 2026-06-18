@@ -1,6 +1,7 @@
 const state = {
   device: null,
   activeCall: null,
+  activeClientCallId: "",
   bridgeCallSid: "",
 };
 
@@ -65,6 +66,56 @@ function requirePhoneNumber(input, label) {
   return value;
 }
 
+function makeClientCallId() {
+  if (window.crypto && typeof window.crypto.randomUUID === "function") {
+    return window.crypto.randomUUID();
+  }
+  return `call_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+async function runPreflight(friendNumber) {
+  const response = await fetch(`/api/preflight?to=${encodeURIComponent(friendNumber)}`);
+  const diagnostics = await response.json();
+
+  for (const check of diagnostics.checks || []) {
+    log(check, "success");
+  }
+  for (const warning of diagnostics.warnings || []) {
+    log(warning);
+  }
+  for (const error of diagnostics.errors || []) {
+    log(error, "error");
+  }
+
+  if (!response.ok || diagnostics.ok !== true) {
+    throw new Error("Preflight failed. Fix the configuration or Twilio account issue before dialing.");
+  }
+
+  return diagnostics;
+}
+
+async function fetchCallEvents(clientCallId) {
+  if (!clientCallId) {
+    return;
+  }
+
+  try {
+    const data = await api(`/api/call-events?clientCallId=${encodeURIComponent(clientCallId)}`);
+    if (!data.events || data.events.length === 0) {
+      log(`No Twilio carrier events received yet for trace ${clientCallId}. Check Twilio Monitor for the child call.`);
+      return;
+    }
+
+    for (const event of data.events.slice().reverse()) {
+      log(
+        `Twilio event ${event.callStatus || "unknown"} for ${event.to || "unknown destination"}; Call SID ${event.callSid || "unknown"}.`
+      );
+    }
+  } catch (error) {
+    log(error.message || "Could not fetch call events.", "error");
+  }
+}
+
 function describeCallError(error) {
   const details = [
     error.code ? `code ${error.code}` : "",
@@ -94,12 +145,15 @@ function wireCallEvents(call) {
     log("Browser connected to Twilio. Waiting for the phone leg to answer.", "success");
   });
   call.on("disconnect", () => {
+    const clientCallId = state.activeClientCallId;
     state.activeCall = null;
+    state.activeClientCallId = "";
     setConnectionState("Browser ready", "ready");
     elements.hangupBrowserButton.disabled = true;
     elements.browserCallButton.disabled = false;
     elements.agentTestButton.disabled = false;
     log("Call ended or the phone leg disconnected.");
+    window.setTimeout(() => fetchCallEvents(clientCallId), 1200);
   });
   call.on("cancel", () => log("Browser call canceled."));
   call.on("reject", () => log("Browser call rejected.", "error"));
@@ -162,11 +216,16 @@ async function startBrowserCall(event) {
   }
 
   elements.browserCallButton.disabled = true;
+  elements.agentTestButton.disabled = true;
   setConnectionState("Dialing...", "live");
+  await runPreflight(friendNumber);
+  const clientCallId = makeClientCallId();
+  state.activeClientCallId = clientCallId;
+  log(`Call trace ${clientCallId}.`);
   log(`Dialing ${friendNumber} from browser.`);
 
   state.activeCall = await state.device.connect({
-    params: { To: friendNumber },
+    params: { To: friendNumber, ClientCallId: clientCallId },
   });
   wireCallEvents(state.activeCall);
 }
@@ -179,10 +238,11 @@ async function startAgentTest() {
   elements.browserCallButton.disabled = true;
   elements.agentTestButton.disabled = true;
   setConnectionState("Calling agent...", "live");
+  state.activeClientCallId = makeClientCallId();
   log("Calling Twilio test agent.");
 
   state.activeCall = await state.device.connect({
-    params: { To: "agent:test" },
+    params: { To: "agent:test", ClientCallId: state.activeClientCallId },
   });
   wireCallEvents(state.activeCall);
 }
