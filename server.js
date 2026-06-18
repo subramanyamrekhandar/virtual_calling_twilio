@@ -332,6 +332,15 @@ async function twilioRequest(method, apiPath, formData) {
   return data;
 }
 
+function normalizeUrl(value) {
+  return String(value || "").trim().replace(/\/$/, "");
+}
+
+function expectedVoiceUrl() {
+  const publicBaseUrl = normalizeUrl(optionalEnv("PUBLIC_BASE_URL"));
+  return publicBaseUrl ? `${publicBaseUrl}/voice` : "";
+}
+
 function getConfig() {
   const twimlAppSid = optionalEnv("TWILIO_TWIML_APP_SID");
   const accountSid = optionalEnv("TWILIO_ACCOUNT_SID");
@@ -354,6 +363,7 @@ function getConfig() {
     twilioNumber: optionalEnv("TWILIO_NUMBER"),
     indiaCallerId: optionalEnv("INDIA_CALLER_ID"),
     twimlAppSid,
+    expectedVoiceUrl: expectedVoiceUrl(),
     configErrors,
     browserCallingConfigured: Boolean(
       accountSid &&
@@ -471,6 +481,31 @@ async function selectCallerIdForDestination(accountSid, phoneNumber, diagnostics
   };
 }
 
+async function verifyTwimlAppVoiceUrl(accountSid, diagnostics) {
+  const twimlAppSid = validateSid("TWILIO_TWIML_APP_SID", "AP");
+  const expectedUrl = expectedVoiceUrl();
+
+  if (!expectedUrl) {
+    diagnostics.errors.push("PUBLIC_BASE_URL is required so Twilio can reach this app's /voice webhook.");
+    return;
+  }
+
+  const app = await twilioRequest(
+    "GET",
+    `/2010-04-01/Accounts/${accountSid}/Applications/${encodeURIComponent(twimlAppSid)}.json`
+  );
+  const actualUrl = normalizeUrl(app.voice_url);
+  diagnostics.twimlAppVoiceUrl = actualUrl;
+  diagnostics.expectedVoiceUrl = expectedUrl;
+
+  if (actualUrl !== expectedUrl) {
+    diagnostics.errors.push(`TwiML App Voice Request URL is ${actualUrl || "empty"}; set it to ${expectedUrl}.`);
+    return;
+  }
+
+  diagnostics.checks.push(`TwiML App Voice Request URL is correct: ${expectedUrl}.`);
+}
+
 async function buildPreflight(to) {
   const diagnostics = {
     ok: true,
@@ -480,6 +515,8 @@ async function buildPreflight(to) {
     accountSid: maskValue(optionalEnv("TWILIO_ACCOUNT_SID")),
     apiKeySid: maskValue(optionalEnv("TWILIO_API_KEY_SID")),
     twimlAppSid: maskValue(optionalEnv("TWILIO_TWIML_APP_SID")),
+    expectedVoiceUrl: expectedVoiceUrl(),
+    twimlAppVoiceUrl: "",
     twilioNumber: optionalEnv("TWILIO_NUMBER"),
     checks: [],
     warnings: destinationGuidance(to),
@@ -504,6 +541,7 @@ async function buildPreflight(to) {
     const account = await twilioRequest("GET", `/2010-04-01/Accounts/${accountSid}.json`);
     diagnostics.checks.push(`Twilio account status: ${account.status || "unknown"}.`);
 
+    await verifyTwimlAppVoiceUrl(accountSid, diagnostics);
     const selectedCallerId = await selectCallerIdForDestination(accountSid, to, diagnostics);
     diagnostics.callerId = selectedCallerId.callerId;
     diagnostics.callerIdEnvName = selectedCallerId.callerIdEnvName;
@@ -536,6 +574,12 @@ async function routeApi(req, res, url) {
       ? recentCallEvents.filter((event) => event.clientCallId === clientCallId)
       : recentCallEvents.slice(0, 25);
     writeJson(res, 200, { events });
+    return true;
+  }
+
+  if (req.method === "DELETE" && url.pathname === "/api/call-events") {
+    recentCallEvents.length = 0;
+    writeJson(res, 200, { ok: true });
     return true;
   }
 

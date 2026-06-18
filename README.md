@@ -45,6 +45,16 @@ Browser calling uses the Twilio Voice SDK. In Twilio Console:
 https://your-public-url.example.com/voice
 ```
 
+For the Vercel deployment in this repo, that should be:
+
+```text
+https://virtual-calling-twilio.vercel.app/voice
+```
+
+If Twilio Monitor shows error `11200` with HTTP `502` against another URL, such
+as an old `/api/v1/telephony/inbound` endpoint, update the TwiML App Voice
+Request URL before testing again.
+
 The app accepts both `GET` and `POST` for this URL, so either Twilio request
 method will work.
 
@@ -73,6 +83,7 @@ Before a browser-to-phone call, the app runs a server-side preflight check:
 
 - validates SID prefixes and phone number formats
 - verifies the Twilio account is reachable
+- verifies the TwiML App Voice Request URL points to this app's `/voice` webhook
 - verifies `TWILIO_NUMBER` belongs to the account
 - logs country-specific guidance for the destination
 

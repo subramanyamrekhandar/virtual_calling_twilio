@@ -232,6 +232,15 @@ async function fetchCallEvents(clientCallId, destination = "", attempt = 1) {
   }
 }
 
+async function clearCallLog() {
+  elements.callLog.replaceChildren();
+  try {
+    await api("/api/call-events", { method: "DELETE" });
+  } catch (error) {
+    log(error.message || "Could not clear server-side call events.", "error");
+  }
+}
+
 function describeCallError(error) {
   const details = [
     error.code ? `code ${error.code}` : "",
@@ -479,7 +488,7 @@ function bindEvents() {
   });
 
   elements.clearLogButton.addEventListener("click", () => {
-    elements.callLog.replaceChildren();
+    clearCallLog();
   });
 }
 

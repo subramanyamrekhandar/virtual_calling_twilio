@@ -196,6 +196,11 @@ button.danger:hover:not(:disabled) {
   color: #344253;
 }
 
+.clear-log-button {
+  width: auto;
+  padding: 8px 12px;
+}
+
 .icon-button:hover:not(:disabled) {
   background: #dfe6ef;
 }
