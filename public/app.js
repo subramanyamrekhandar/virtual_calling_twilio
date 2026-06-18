@@ -227,6 +227,9 @@ async function loadConfig() {
 
   if (!config.browserCallingConfigured) {
     log("Browser calling needs TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET, and TWILIO_TWIML_APP_SID.", "error");
+    for (const error of config.configErrors || []) {
+      log(error, "error");
+    }
   } else {
     log(`Config loaded. TwiML App ${config.twimlAppSid || "unknown"}, caller ID ${config.twilioNumber || "unknown"}.`);
   }

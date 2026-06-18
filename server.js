@@ -54,6 +54,14 @@ function validatePhoneNumber(value, label) {
   return value;
 }
 
+function validateSid(name, prefix) {
+  const value = env(name);
+  if (!value.startsWith(prefix)) {
+    throw new Error(`${name} must start with ${prefix}. Current value starts with ${value.slice(0, 2) || "nothing"}.`);
+  }
+  return value;
+}
+
 function escapeXml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -131,9 +139,10 @@ function base64UrlJson(value) {
 
 function createVoiceToken(identity) {
   const now = Math.floor(Date.now() / 1000);
-  const apiKeySid = env("TWILIO_API_KEY_SID");
+  const apiKeySid = validateSid("TWILIO_API_KEY_SID", "SK");
   const apiKeySecret = env("TWILIO_API_KEY_SECRET");
-  const accountSid = env("TWILIO_ACCOUNT_SID");
+  const accountSid = validateSid("TWILIO_ACCOUNT_SID", "AC");
+  const twimlAppSid = validateSid("TWILIO_TWIML_APP_SID", "AP");
 
   const header = {
     typ: "JWT",
@@ -150,7 +159,7 @@ function createVoiceToken(identity) {
       identity,
       voice: {
         outgoing: {
-          application_sid: env("TWILIO_TWIML_APP_SID"),
+          application_sid: twimlAppSid,
         },
         incoming: {
           allow: false,
@@ -241,16 +250,33 @@ async function twilioRequest(method, apiPath, formData) {
 }
 
 function getConfig() {
+  const twimlAppSid = optionalEnv("TWILIO_TWIML_APP_SID");
+  const accountSid = optionalEnv("TWILIO_ACCOUNT_SID");
+  const apiKeySid = optionalEnv("TWILIO_API_KEY_SID");
+  const configErrors = [];
+
+  if (accountSid && !accountSid.startsWith("AC")) {
+    configErrors.push("TWILIO_ACCOUNT_SID must start with AC.");
+  }
+  if (apiKeySid && !apiKeySid.startsWith("SK")) {
+    configErrors.push("TWILIO_API_KEY_SID must start with SK.");
+  }
+  if (twimlAppSid && !twimlAppSid.startsWith("AP")) {
+    configErrors.push("TWILIO_TWIML_APP_SID must start with AP. You currently have an Account SID or another wrong value there.");
+  }
+
   return {
     defaultMyNumber: optionalEnv("DEFAULT_MY_PHONE_NUMBER"),
     defaultFriendNumber: optionalEnv("DEFAULT_FRIEND_PHONE_NUMBER"),
     twilioNumber: optionalEnv("TWILIO_NUMBER"),
-    twimlAppSid: optionalEnv("TWILIO_TWIML_APP_SID"),
+    twimlAppSid,
+    configErrors,
     browserCallingConfigured: Boolean(
-      optionalEnv("TWILIO_ACCOUNT_SID") &&
-        optionalEnv("TWILIO_API_KEY_SID") &&
+      accountSid &&
+        apiKeySid &&
         optionalEnv("TWILIO_API_KEY_SECRET") &&
-        optionalEnv("TWILIO_TWIML_APP_SID")
+        twimlAppSid &&
+        configErrors.length === 0
     ),
   };
 }
