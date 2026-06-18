@@ -110,7 +110,8 @@ async function registerDevice() {
   elements.registerDeviceButton.disabled = true;
   setConnectionState("Connecting...");
 
-  const identity = elements.identity.value.trim() || "web-user";
+  const identity = (elements.identity.value.trim() || "web_user").replace(/[^A-Za-z0-9_]/g, "_").slice(0, 121);
+  elements.identity.value = identity;
   const { token } = await api(`/api/token?identity=${encodeURIComponent(identity)}`);
 
   if (state.device) {

@@ -62,6 +62,15 @@ function validateSid(name, prefix) {
   return value;
 }
 
+function sanitizeIdentity(value) {
+  const identity = String(value || "web_user")
+    .trim()
+    .replace(/[^A-Za-z0-9_]/g, "_")
+    .slice(0, 121);
+
+  return identity || "web_user";
+}
+
 function escapeXml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -289,7 +298,7 @@ async function routeApi(req, res, url) {
 
   if (req.method === "GET" && url.pathname === "/api/token") {
     try {
-      const identity = url.searchParams.get("identity") || `web-${crypto.randomUUID()}`;
+      const identity = sanitizeIdentity(url.searchParams.get("identity") || `web_${crypto.randomUUID()}`);
       writeJson(res, 200, { identity, token: createVoiceToken(identity) });
     } catch (error) {
       sendError(res, 500, error);
